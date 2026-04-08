@@ -17,3 +17,15 @@ services:
         value: "5"
       - key: ML_MAX_MATCH_RESULTS
         value: "10"
+  - type: static
+    name: ecowise-web-staging
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
+    envVars:
+      - key: VITE_API_URL
+        sync: false
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html

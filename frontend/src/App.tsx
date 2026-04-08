@@ -153,6 +153,7 @@ const geoLayerMeta = {
   volunteer_count: { label: 'Volunteers', tone: COLORS.volunteers },
   investor_count: { label: 'Investors', tone: COLORS.ngos },
 } as const;
+const apiBaseUrl = (import.meta.env.VITE_API_URL || 'http://localhost:8000').replace(/\/$/, '');
 
 function geoMetricValue(point: Entities['activity_geography_map']['points'][number], layer: keyof typeof geoLayerMeta) {
   return point[layer];
@@ -194,11 +195,10 @@ function App() {
     const loadData = async () => {
       setLoading(true);
       try {
-        const host = 'http://localhost:8000';
         const [overviewRes, entitiesRes, clustersRes] = await Promise.all([
-          fetch(`${host}/api/v2/analytics/overview`),
-          fetch(`${host}/api/v2/analytics/entities`),
-          fetch(`${host}/api/v2/analytics/clusters`),
+          fetch(`${apiBaseUrl}/api/v2/analytics/overview`),
+          fetch(`${apiBaseUrl}/api/v2/analytics/entities`),
+          fetch(`${apiBaseUrl}/api/v2/analytics/clusters`),
         ]);
         if (!cancelled) {
           if (overviewRes.ok) setOverview(await overviewRes.json());
@@ -586,9 +586,9 @@ function App() {
                     <Tooltip
                       cursor={{ strokeDasharray: '3 3' }}
                       contentStyle={{ backgroundColor: COLORS.panel, borderColor: COLORS.border }}
-                      formatter={(_, __, payload) => {
-                        if (!payload || !payload[0]) return null;
-                        const node = payload[0].payload as Clusters['semantic_map'][number];
+                      formatter={(_, __, item) => {
+                        const node = (item?.payload ?? null) as Clusters['semantic_map'][number] | null;
+                        if (!node) return null;
                         return [
                           `${node.sector} | ${node.region}`,
                           `${node.name} (${node.type})`,
