@@ -13,7 +13,7 @@ services:
       - key: ECOWISE_DATABASE_URL
         sync: false
       - key: ML_WORKER_ENABLED
-        value: "true"
+        value: "false"
       - key: ML_WORKER_POLL_INTERVAL_SECONDS
         value: "5"
       - key: ML_WORKER_BATCH_SIZE
