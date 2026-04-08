@@ -21,7 +21,6 @@ services:
   - type: web
     name: ecowise-web-staging
     runtime: static
-    plan: free
     rootDir: frontend
     buildCommand: npm ci && npm run build
     staticPublishPath: dist
