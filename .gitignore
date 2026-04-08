@@ -1,0 +1,14 @@
+# Environments
+venv/
+node_modules/
+__pycache__/
+
+# Data Artifacts
+data/interim/
+data/feature_store/
+data/vectors/
+artifacts/model_outputs/
+artifacts/logs/
+
+# OS Files
+.DS_Store

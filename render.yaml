@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: ecowise-ml-staging
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: ECOWISE_DATABASE_URL
+        sync: false
+      - key: ML_WORKER_ENABLED
+        value: "true"
+      - key: ML_WORKER_POLL_INTERVAL_SECONDS
+        value: "5"
+      - key: ML_WORKER_BATCH_SIZE
+        value: "5"
+      - key: ML_MAX_MATCH_RESULTS
+        value: "10"

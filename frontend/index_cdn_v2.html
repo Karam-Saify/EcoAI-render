@@ -1,0 +1,1037 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Ecowise V2 Intelligence Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              slate: { 900: '#0f172a', 800: '#1e293b', 700: '#334155' }
+            }
+          }
+        }
+      }
+    </script>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/map/js/world.js"></script>
+
+    <style>
+        :root {
+            --bg: #08111f;
+            --bg-elevated: #0f1b2d;
+            --panel: rgba(19, 34, 56, 0.86);
+            --border: rgba(36, 55, 84, 0.92);
+            --text: #ecf2f8;
+            --text-soft: #9fb0c7;
+            --text-dim: #6f829c;
+            --projects: #19c28f;
+            --investors: #4f7cff;
+            --volunteers: #8a7cf7;
+            --ngos: #c89a3d;
+            --teal: #0ea5a4;
+        }
+        body { margin: 0; background: radial-gradient(circle at top left, rgba(25,194,143,0.08), transparent 28%), linear-gradient(180deg, #08111f 0%, #0d1728 52%, #101a2c 100%); color: var(--text); font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+        .tab-btn { padding: 0.75rem 1.5rem; border-bottom: 2px solid transparent; color: var(--text-soft); transition: all 0.2s; cursor: pointer; }
+        .tab-btn.active { color: var(--projects); border-bottom-color: var(--projects); font-weight: 500; }
+        .tab-btn:hover:not(.active) { color: var(--text); border-bottom-color: var(--border); }
+        .premium-card { background-color: var(--panel); border: 1px solid var(--border); border-radius: 0.95rem; padding: 1.5rem; box-shadow: 0 18px 44px rgba(0, 0, 0, 0.22); transition: transform 0.2s; }
+        .premium-card:hover { border-color: rgba(25, 194, 143, 0.34); }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+        const COLORS = {
+            bg: '#08111f',
+            bgElevated: '#0f1b2d',
+            panel: '#132238',
+            panelSoft: 'rgba(15,27,45,0.78)',
+            border: '#243754',
+            text: '#ecf2f8',
+            textSoft: '#9fb0c7',
+            textDim: '#6f829c',
+            projects: '#19c28f',
+            investors: '#4f7cff',
+            volunteers: '#8a7cf7',
+            ngos: '#c89a3d',
+            teal: '#0ea5a4'
+        };
+        const GEO_BOUNDS = { minLat: -55, maxLat: 80, width: 1000, height: 520 };
+        const GEO_LAYER_META = {
+            activity_count: { label: 'Activities', tone: COLORS.projects },
+            ecosystem_total: { label: 'Ecosystem Total', tone: '#56d5d0' },
+            project_count: { label: 'Projects', tone: COLORS.investors },
+            volunteer_count: { label: 'Volunteers', tone: COLORS.volunteers },
+            investor_count: { label: 'Investors', tone: COLORS.ngos }
+        };
+
+        const geoMetricValue = (point, layer) => Number(point?.[layer] || 0);
+        const projectGeoPoint = (lat, lon) => {
+            const clampedLat = Math.min(GEO_BOUNDS.maxLat, Math.max(GEO_BOUNDS.minLat, Number(lat || 0)));
+            return {
+                x: ((Number(lon || 0) + 180) / 360) * GEO_BOUNDS.width,
+                y: ((GEO_BOUNDS.maxLat - clampedLat) / (GEO_BOUNDS.maxLat - GEO_BOUNDS.minLat)) * GEO_BOUNDS.height
+            };
+        };
+
+        const ReactEChart = ({ option, style, onClick }) => {
+            const chartRef = useRef(null);
+            const [chartError, setChartError] = useState(null);
+            useEffect(() => {
+                let chart;
+                setChartError(null);
+                try {
+                    if (chartRef.current) {
+                        chart = echarts.init(chartRef.current, 'dark', { renderer: 'canvas' });
+                        chart.setOption({ ...option, backgroundColor: 'transparent', textStyle: { color: COLORS.textSoft } });
+                        if (onClick) {
+                            chart.on('click', onClick);
+                        }
+                    }
+                } catch (error) {
+                    console.error('ECharts render failed', error);
+                    setChartError(error?.message || 'Chart failed to render');
+                }
+                const handleResize = () => chart && chart.resize();
+                window.addEventListener('resize', handleResize);
+                return () => {
+                    if (chart && onClick) {
+                        chart.off('click', onClick);
+                    }
+                    chart && chart.dispose();
+                    window.removeEventListener('resize', handleResize);
+                };
+            }, [option, onClick]);
+            if (chartError) {
+                return (
+                    <div
+                        className="flex items-center justify-center rounded-2xl border text-sm text-slate-400"
+                        style={{ width: '100%', height: '100%', borderColor: COLORS.border, backgroundColor: 'rgba(8,17,31,0.84)', ...style }}
+                    >
+                        {chartError}
+                    </div>
+                );
+            }
+            return <div ref={chartRef} style={{ width: '100%', height: '100%', ...style }} />;
+        };
+
+        const IconRefresh = ({spinning}) => <svg width="20" height="20" className={spinning ? "animate-spin text-emerald-500" : "text-emerald-500"} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M21 21v-5h-5"/></svg>;
+        const IconCheck = () => <svg width="20" height="20" className="text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>;
+
+        function Dashboard() {
+            const [activeTab, setActiveTab] = useState(1);
+            const [overview, setOverview] = useState(null);
+            const [entities, setEntities] = useState(null);
+            const [clusters, setClusters] = useState(null);
+            const [worldMapReady, setWorldMapReady] = useState(() => typeof echarts !== 'undefined' && typeof echarts.getMap === 'function' && !!echarts.getMap('world'));
+            const [geoLayer, setGeoLayer] = useState('activity_count');
+            const [geoPlaceType, setGeoPlaceType] = useState('all');
+            const [geoSector, setGeoSector] = useState('All sectors');
+            const [selectedGeoId, setSelectedGeoId] = useState(null);
+
+            useEffect(() => {
+                const loadData = async () => {
+                    const host = "http://localhost:8000";
+                    try {
+                        const [resOv, resEn, resCl] = await Promise.all([
+                            fetch(`${host}/api/v2/analytics/overview`),
+                            fetch(`${host}/api/v2/analytics/entities`),
+                            fetch(`${host}/api/v2/analytics/clusters`)
+                        ]);
+                        if (resOv.ok) setOverview(await resOv.json());
+                        if (resEn.ok) setEntities(await resEn.json());
+                        if (resCl.ok) setClusters(await resCl.json());
+                    } catch (error) {
+                        console.error("V2 API Connection Refused", error);
+                    }
+                };
+                loadData();
+            }, []);
+
+            useEffect(() => {
+                let cancelled = false;
+                const hasWorldMap = typeof echarts !== 'undefined' && typeof echarts.getMap === 'function' && !!echarts.getMap('world');
+                if (hasWorldMap) {
+                    setWorldMapReady(true);
+                    return;
+                }
+
+                const sources = [
+                    'https://code.highcharts.com/mapdata/custom/world.geo.json',
+                    'https://raw.githubusercontent.com/holtzy/D3-graph-gallery/master/DATA/world.geojson'
+                ];
+
+                const registerWorldMap = async () => {
+                    for (const url of sources) {
+                        try {
+                            const response = await fetch(url);
+                            if (!response.ok) continue;
+                            const geoJson = await response.json();
+                            if (cancelled) return;
+                            if (geoJson && typeof echarts?.registerMap === 'function') {
+                                echarts.registerMap('world', geoJson);
+                                setWorldMapReady(true);
+                                return;
+                            }
+                        } catch (error) {
+                            console.warn('World map source failed', url, error);
+                        }
+                    }
+                    if (!cancelled) {
+                        setWorldMapReady(false);
+                    }
+                };
+
+                registerWorldMap();
+                return () => {
+                    cancelled = true;
+                };
+            }, []);
+
+            useEffect(() => {
+                const points = entities?.activity_geography_map?.points || [];
+                if (!points.length) return;
+                if (!selectedGeoId || !points.some(point => point.id === selectedGeoId)) {
+                    setSelectedGeoId(points[0].id);
+                }
+            }, [entities, selectedGeoId]);
+
+            if (!overview || !entities || !clusters) {
+                return (
+                    <div className="min-h-screen flex items-center justify-center flex-col gap-4 text-slate-400">
+                        <IconRefresh spinning={true} />
+                        <p>Booting Ecowise V2 Intelligence Subsystems...</p>
+                    </div>
+                );
+            }
+
+            const p1_donutOption = {
+                tooltip: { trigger: 'item' },
+                series: [{
+                    name: 'Ecosystem Share',
+                    type: 'pie',
+                    radius: ['40%', '70%'],
+                    data: overview.entity_composition,
+                    itemStyle: { borderRadius: 4, borderColor: COLORS.panel, borderWidth: 2 },
+                    label: { color: COLORS.textSoft }
+                }],
+                color: [COLORS.projects, COLORS.investors, COLORS.volunteers, COLORS.ngos]
+            };
+
+            const p1_regionBarOption = {
+                tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+                legend: { textStyle: { color: COLORS.textSoft } },
+                grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
+                xAxis: { type: 'value', splitLine: { lineStyle: { color: COLORS.border } }, axisLabel: { color: COLORS.textDim } },
+                yAxis: { type: 'category', data: overview.regional_distribution.map(d => d.region), axisLabel: { color: COLORS.textSoft } },
+                series: [
+                    { name: 'Projects', type: 'bar', stack: 'total', data: overview.regional_distribution.map(d => d.Projects) },
+                    { name: 'Investors', type: 'bar', stack: 'total', data: overview.regional_distribution.map(d => d.Investors) },
+                    { name: 'Volunteers', type: 'bar', stack: 'total', data: overview.regional_distribution.map(d => d.Volunteers) },
+                    { name: 'NGOs', type: 'bar', stack: 'total', data: overview.regional_distribution.map(d => d.NGOs) }
+                ],
+                color: [COLORS.projects, COLORS.investors, COLORS.volunteers, COLORS.ngos]
+            };
+
+            const p1_stageOption = {
+                tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+                grid: { left: '3%', right: '4%', bottom: '3%', top: '10%', containLabel: true },
+                xAxis: { type: 'category', data: overview.stage_distribution.map(d => d.name), axisLabel: { color: COLORS.textSoft, rotate: 18 } },
+                yAxis: { type: 'value', splitLine: { lineStyle: { color: COLORS.border } }, axisLabel: { color: COLORS.textDim } },
+                series: [{ type: 'bar', data: overview.stage_distribution.map(d => d.val), itemStyle: { color: COLORS.projects }, barWidth: '46%' }]
+            };
+
+            const p1_coverageOption = {
+                tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+                legend: { textStyle: { color: COLORS.textSoft } },
+                grid: { left: '3%', right: '4%', bottom: '3%', top: '10%', containLabel: true },
+                xAxis: { type: 'value', splitLine: { lineStyle: { color: COLORS.border } }, axisLabel: { color: COLORS.textDim } },
+                yAxis: { type: 'category', data: overview.match_coverage.map(d => d.entity), axisLabel: { color: COLORS.textSoft } },
+                series: [
+                    { name: 'Matched Projects', type: 'bar', data: overview.match_coverage.map(d => d.matched_projects), itemStyle: { color: COLORS.investors } },
+                    { name: 'Avg Top Score', type: 'bar', data: overview.match_coverage.map(d => d.avg_top_score), itemStyle: { color: COLORS.ngos } }
+                ]
+            };
+
+            const p2_sectorStageHeatmapOption = {
+                tooltip: { position: 'top' },
+                grid: { height: '60%', top: '10%' },
+                xAxis: { type: 'category', data: entities.project_sector_stage_heatmap.xAxis, splitArea: { show: true } },
+                yAxis: { type: 'category', data: entities.project_sector_stage_heatmap.yAxis, splitArea: { show: true } },
+                visualMap: { min: 0, max: 50, calculable: true, orient: 'horizontal', left: 'center', bottom: '1%', textStyle: { color: COLORS.textSoft }, inRange: { color: [COLORS.panel, COLORS.projects] } },
+                series: [{ type: 'heatmap', data: entities.project_sector_stage_heatmap.data, label: { show: true, color: '#fff' } }]
+            };
+
+            const p2_reportingRiskHeatmapOption = {
+                tooltip: { position: 'top' },
+                xAxis: { type: 'category', data: ['Low', 'Med', 'High'], name: 'Burden', nameLocation: 'middle', nameGap: 30 },
+                yAxis: { type: 'category', data: ['Low', 'Med', 'High'], name: 'Risk', nameLocation: 'middle', nameGap: 30 },
+                visualMap: { show: false, min: 0, max: 40, inRange: { color: [COLORS.panel, COLORS.volunteers] } },
+                series: [{
+                    type: 'heatmap',
+                    data: [
+                        [0,0,entities.investor_risk_reporting_matrix[0][0]], [1,0,entities.investor_risk_reporting_matrix[0][1]], [2,0,entities.investor_risk_reporting_matrix[0][2]],
+                        [0,1,entities.investor_risk_reporting_matrix[1][0]], [1,1,entities.investor_risk_reporting_matrix[1][1]], [2,1,entities.investor_risk_reporting_matrix[1][2]],
+                        [0,2,entities.investor_risk_reporting_matrix[2][0]], [1,2,entities.investor_risk_reporting_matrix[2][1]], [2,2,entities.investor_risk_reporting_matrix[2][2]]
+                    ],
+                    label: { show: true, color: '#fff' }
+                }]
+            };
+
+            const p2_skillGapOption = {
+                tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+                legend: { textStyle: { color: COLORS.textSoft } },
+                yAxis: { type: 'category', data: entities.skill_demand_supply.map(s => s.skill), axisLabel: { color: COLORS.textSoft } },
+                xAxis: { type: 'value', splitLine: { lineStyle: { color: COLORS.border } }, axisLabel: { color: COLORS.textDim } },
+                series: [
+                    { name: 'Demand (Projects)', type: 'bar', itemStyle: { color: COLORS.ngos }, data: entities.skill_demand_supply.map(s => s.demand) },
+                    { name: 'Supply (Volunteers)', type: 'bar', itemStyle: { color: COLORS.investors }, data: entities.skill_demand_supply.map(s => s.supply) }
+                ]
+            };
+
+            const p2_fundingOption = {
+                tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+                grid: { left: '3%', right: '4%', bottom: '3%', top: '10%', containLabel: true },
+                xAxis: { type: 'category', data: entities.funding_histogram.map(d => d.band), axisLabel: { color: COLORS.textSoft } },
+                yAxis: { type: 'value', splitLine: { lineStyle: { color: COLORS.border } }, axisLabel: { color: COLORS.textDim } },
+                series: [{ type: 'bar', data: entities.funding_histogram.map(d => d.count), itemStyle: { color: COLORS.teal }, barWidth: '46%' }]
+            };
+
+            const p2_geoOption = {
+                tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+                grid: { left: '3%', right: '4%', bottom: '3%', top: '10%', containLabel: true },
+                xAxis: { type: 'value', splitLine: { lineStyle: { color: COLORS.border } }, axisLabel: { color: COLORS.textDim } },
+                yAxis: { type: 'category', data: entities.top_project_geographies.map(d => d.name), axisLabel: { color: COLORS.textSoft } },
+                series: [{ type: 'bar', data: entities.top_project_geographies.map(d => d.val), itemStyle: { color: COLORS.volunteers } }]
+            };
+
+            const semanticTypes = [...new Set(clusters.semantic_map.map(node => node.type))];
+            const graphColors = {
+                project: COLORS.projects,
+                investor: COLORS.investors,
+                volunteer: COLORS.volunteers,
+                grant: COLORS.ngos,
+                precedent: COLORS.teal
+            };
+            const p3_scatterOption = {
+                title: { text: 'Semantic Landscape (t-SNE projection)', textStyle: { color: COLORS.textSoft, fontSize: 12 }, left: 'center' },
+                tooltip: {
+                    formatter: params => {
+                        const item = params.data.meta;
+                        return `<b>${item.name}</b><br/>${item.type}<br/>Sector: ${item.sector}<br/>Region: ${item.region}`;
+                    }
+                },
+                legend: { data: semanticTypes, top: 'bottom', textStyle: { color: COLORS.textSoft } },
+                xAxis: { scale: true, show: false },
+                yAxis: { scale: true, show: false },
+                series: semanticTypes.map(type => ({
+                    name: type,
+                    type: 'scatter',
+                    symbolSize: type === 'Project' ? 9 : 12,
+                    data: clusters.semantic_map.filter(node => node.type === type).map(node => ({
+                        value: [node.x, node.y],
+                        meta: node
+                    })),
+                    itemStyle: { opacity: 0.84 }
+                })),
+                color: [COLORS.projects, COLORS.investors, COLORS.volunteers, COLORS.teal]
+            };
+
+            const p3_corridorOption = {
+                tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+                legend: { textStyle: { color: COLORS.textSoft } },
+                grid: { left: '3%', right: '4%', bottom: '3%', top: '14%', containLabel: true },
+                xAxis: { type: 'value', max: 100, splitLine: { lineStyle: { color: COLORS.border } }, axisLabel: { color: COLORS.textDim } },
+                yAxis: { type: 'category', data: clusters.match_corridors.map(d => d.sector), axisLabel: { color: COLORS.textSoft } },
+                series: [
+                    { name: 'Investor Fit', type: 'bar', data: clusters.match_corridors.map(d => d.avg_investor_score), itemStyle: { color: COLORS.investors } },
+                    { name: 'Volunteer Fit', type: 'bar', data: clusters.match_corridors.map(d => d.avg_volunteer_score), itemStyle: { color: COLORS.volunteers } },
+                    { name: 'Grant Fit', type: 'bar', data: clusters.match_corridors.map(d => d.avg_grant_score), itemStyle: { color: COLORS.ngos } },
+                    { name: 'Precedent Fit', type: 'bar', data: clusters.match_corridors.map(d => d.avg_precedent_score), itemStyle: { color: COLORS.teal } }
+                ]
+            };
+
+            const p3_graphOption = {
+                tooltip: {
+                    formatter: params => {
+                        if (params.dataType === 'edge') {
+                            return `<b>${params.data.relation}</b><br/>Score: ${params.data.value}<br/>${params.data.rationale}`;
+                        }
+                        return `<b>${params.data.name}</b><br/>${params.data.group}<br/>${params.data.subtitle || ''}`;
+                    }
+                },
+                series: [{
+                    type: 'graph',
+                    layout: 'force',
+                    roam: true,
+                    draggable: true,
+                    label: { show: true, color: '#e2e8f0', fontSize: 10 },
+                    force: { repulsion: 220, edgeLength: 96 },
+                    data: clusters.match_network.nodes.map(node => ({
+                        ...node,
+                        symbolSize: Math.max(18, Math.min(42, 14 + Math.sqrt(node.value || 1))),
+                        itemStyle: { color: graphColors[node.group] || COLORS.textSoft }
+                    })),
+                    links: clusters.match_network.edges.map(edge => ({
+                        ...edge,
+                        lineStyle: { color: COLORS.border, width: Math.max(1.5, Math.min(6, (edge.value || 1) / 20)), opacity: 0.82 }
+                    }))
+                }]
+            };
+
+            const geoMap = entities.activity_geography_map || { points: [], filters: { sectors: [] }, summary: {} };
+            const filteredGeoPoints = [...(geoMap.points || [])]
+                .filter(point => geoPlaceType === 'all' || point.place_type === geoPlaceType)
+                .filter(point => geoSector === 'All sectors' || Number((point.sector_counts || {})[geoSector] || 0) > 0)
+                .sort((left, right) => {
+                    const metricGap = geoMetricValue(right, geoLayer) - geoMetricValue(left, geoLayer);
+                    if (metricGap !== 0) return metricGap;
+                    return (right.activity_count || 0) - (left.activity_count || 0);
+                });
+            const mappedGeoPoints = filteredGeoPoints.filter(point => point.is_mappable && geoMetricValue(point, geoLayer) > 0);
+            const activeGeoPoint = filteredGeoPoints.find(point => point.id === selectedGeoId) || filteredGeoPoints[0] || null;
+            const topGeoLabelIds = filteredGeoPoints.slice(0, 8).map(point => point.id);
+            const maxGeoMetric = Math.max(...mappedGeoPoints.map(point => geoMetricValue(point, geoLayer)), 1);
+            const geoSeriesData = mappedGeoPoints.map(point => ({
+                name: point.name,
+                value: [Number(point.lon || 0), Number(point.lat || 0), geoMetricValue(point, geoLayer)],
+                point
+            }));
+            const geoLabelData = geoSeriesData.filter(item => topGeoLabelIds.includes(item.point.id));
+            const geoSelectedData = activeGeoPoint && activeGeoPoint.is_mappable ? [{
+                name: activeGeoPoint.name,
+                value: [Number(activeGeoPoint.lon || 0), Number(activeGeoPoint.lat || 0), geoMetricValue(activeGeoPoint, geoLayer)],
+                point: activeGeoPoint
+            }] : [];
+
+            const p4_geoOption = {
+                animationDuration: 600,
+                tooltip: {
+                    trigger: 'item',
+                    backgroundColor: 'rgba(8,17,31,0.94)',
+                    borderColor: COLORS.border,
+                    textStyle: { color: COLORS.text },
+                    formatter: params => {
+                        const point = params?.data?.point;
+                        if (!point) {
+                            return params.name || '';
+                        }
+                        return [
+                            `<b>${point.name}</b>`,
+                            point.place_type === 'country' ? 'Country' : 'Regional Program',
+                            `${GEO_LAYER_META[geoLayer].label}: ${geoMetricValue(point, geoLayer)}`,
+                            `Activities: ${point.activity_count || 0}`,
+                            `Projects: ${point.project_count || 0}`,
+                            `Volunteers: ${point.volunteer_count || 0}`,
+                            `Investors: ${point.investor_count || 0}`,
+                            `Sector: ${point.dominant_sector || 'General'}`
+                        ].join('<br/>');
+                    }
+                },
+                geo: {
+                    map: 'world',
+                    roam: true,
+                    left: 0,
+                    right: 0,
+                    top: 0,
+                    bottom: 0,
+                    itemStyle: {
+                        areaColor: '#0d1c30',
+                        borderColor: 'rgba(111,130,156,0.45)',
+                        borderWidth: 0.8
+                    },
+                    emphasis: {
+                        itemStyle: {
+                            areaColor: '#16314d'
+                        },
+                        label: { show: false }
+                    },
+                    silent: false
+                },
+                series: [
+                    {
+                        name: GEO_LAYER_META[geoLayer].label,
+                        type: 'scatter',
+                        coordinateSystem: 'geo',
+                        data: geoSeriesData,
+                        symbolSize: value => 8 + Math.sqrt((value?.[2] || 0) / maxGeoMetric) * 28,
+                        itemStyle: {
+                            color: GEO_LAYER_META[geoLayer].tone,
+                            opacity: 0.72,
+                            shadowBlur: 18,
+                            shadowColor: GEO_LAYER_META[geoLayer].tone
+                        },
+                        emphasis: {
+                            scale: true,
+                            itemStyle: { opacity: 0.96 }
+                        }
+                    },
+                    {
+                        type: 'effectScatter',
+                        coordinateSystem: 'geo',
+                        data: geoLabelData,
+                        symbolSize: value => 10 + Math.sqrt((value?.[2] || 0) / maxGeoMetric) * 18,
+                        rippleEffect: { scale: 3.2, brushType: 'stroke' },
+                        itemStyle: {
+                            color: GEO_LAYER_META[geoLayer].tone,
+                            shadowBlur: 24,
+                            shadowColor: GEO_LAYER_META[geoLayer].tone
+                        },
+                        label: {
+                            show: true,
+                            formatter: '{b}',
+                            position: 'right',
+                            color: COLORS.text,
+                            fontSize: 11
+                        },
+                        labelLayout: { hideOverlap: true }
+                    },
+                    {
+                        type: 'effectScatter',
+                        coordinateSystem: 'geo',
+                        data: geoSelectedData,
+                        symbolSize: value => 14 + Math.sqrt((value?.[2] || 0) / maxGeoMetric) * 22,
+                        rippleEffect: { scale: 4, brushType: 'stroke' },
+                        itemStyle: {
+                            color: COLORS.text,
+                            shadowBlur: 26,
+                            shadowColor: COLORS.text
+                        },
+                        label: {
+                            show: true,
+                            formatter: '{b}',
+                            position: 'top',
+                            color: COLORS.text,
+                            fontSize: 12,
+                            fontWeight: 600
+                        },
+                        zlevel: 3
+                    }
+                ]
+            };
+
+            return (
+                <div className="min-h-screen bg-slate-900 text-slate-100 p-8">
+                    <header className="mb-6 flex justify-between items-end">
+                        <div className="w-1/3">
+                            <h1 className="text-3xl font-semibold tracking-tight text-white mb-2">Ecosystem Intelligence</h1>
+                            <p className="text-slate-400 text-sm">Real-time matching aggregates, canonical distributions, and semantic ecosystem clusters powered by Ecowise.</p>
+                        </div>
+                        <div className="flex bg-slate-800 rounded-lg p-1 border border-slate-700">
+                            <div className={`tab-btn ${activeTab===1?'active bg-slate-900 rounded-md':''}`} onClick={()=>setActiveTab(1)}>1. Executive Overview</div>
+                            <div className={`tab-btn ${activeTab===2?'active bg-slate-900 rounded-md':''}`} onClick={()=>setActiveTab(2)}>2. Entity Intelligence</div>
+                            <div className={`tab-btn ${activeTab===3?'active bg-slate-900 rounded-md':''}`} onClick={()=>setActiveTab(3)}>3. Matching & Clusters</div>
+                            <div className={`tab-btn ${activeTab===4?'active bg-slate-900 rounded-md':''}`} onClick={()=>setActiveTab(4)}>4. Geographic Activity</div>
+                        </div>
+                    </header>
+
+                    <div className="w-full h-px bg-slate-800 mb-8"></div>
+
+                    {activeTab === 1 && (
+                        <div className="space-y-6 animate-fade-in">
+                            <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
+                                <div className="premium-card text-center"><p className="text-slate-400 text-xs mb-1">TOTAL INVESTORS</p><h3 className="text-3xl font-light text-blue-400">{overview.top_kpis.total_investors}</h3></div>
+                                <div className="premium-card text-center"><p className="text-slate-400 text-xs mb-1">TOTAL PROJECTS</p><h3 className="text-3xl font-light text-emerald-400">{overview.top_kpis.total_projects}</h3></div>
+                                <div className="premium-card text-center"><p className="text-slate-400 text-xs mb-1">TOTAL VOLUNTEERS</p><h3 className="text-3xl font-light text-purple-400">{overview.top_kpis.total_volunteers}</h3></div>
+                                <div className="premium-card text-center"><p className="text-slate-400 text-xs mb-1">TOTAL NGOS</p><h3 className="text-3xl font-light text-amber-500">{overview.top_kpis.total_ngos}</h3></div>
+                                <div className="premium-card text-center border-emerald-900/50"><p className="text-slate-400 text-xs mb-1">TOTAL MATCHES</p><h3 className="text-2xl font-mono text-emerald-300 mt-2">{overview.top_kpis.total_matches}</h3></div>
+                                <div className="premium-card text-center border-emerald-900/50"><p className="text-slate-400 text-xs mb-1">AVG MATCH SCORE</p><h3 className="text-2xl font-mono text-emerald-300 mt-2">{overview.top_kpis.avg_match_score}</h3></div>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 h-96">
+                                <div className="premium-card flex flex-col items-center">
+                                    <h4 className="w-full text-sm text-slate-300 mb-2">Platform Composition</h4>
+                                    <ReactEChart option={p1_donutOption} />
+                                </div>
+                                <div className="premium-card flex flex-col items-center">
+                                    <h4 className="w-full text-sm text-slate-300 mb-2">Regional Concentration Matrix</h4>
+                                    <ReactEChart option={p1_regionBarOption} />
+                                </div>
+                                <div className="premium-card overflow-hidden">
+                                    <h4 className="w-full text-sm text-slate-300 mb-6">Top Functional Sectors</h4>
+                                    <div className="flex flex-col gap-4 text-sm text-slate-300">
+                                        {overview.top_sectors.map((sec, i) => {
+                                            const mx = Math.max(...overview.top_sectors.map(d => d.val), 1);
+                                            const w = Math.max(5, (sec.val / mx) * 100);
+                                            return (
+                                                <div key={i} className="flex items-center gap-3">
+                                                    <div className="w-28 text-right truncate text-slate-400">{sec.name}</div>
+                                                    <div className="flex-1 bg-slate-800 h-2 rounded"><div className="h-2 bg-emerald-500 rounded" style={{width: `${w}%`}}></div></div>
+                                                    <div className="w-8 font-mono text-xs">{sec.val}</div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 h-80">
+                                <div className="premium-card">
+                                    <h4 className="w-full text-sm text-slate-300 mb-2">Match Coverage by Entity Type</h4>
+                                    <ReactEChart option={p1_coverageOption} />
+                                </div>
+                                <div className="premium-card">
+                                    <h4 className="w-full text-sm text-slate-300 mb-2">Project Stage Distribution</h4>
+                                    <ReactEChart option={p1_stageOption} />
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {activeTab === 2 && (
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 animate-fade-in p-2">
+                            <div className="space-y-6">
+                                <div className="premium-card" style={{height:'350px'}}>
+                                    <h4 className="w-full text-sm text-slate-300 mb-2">Entity: Project Pipeline (Sector x Stage)</h4>
+                                    <ReactEChart option={p2_sectorStageHeatmapOption} />
+                                </div>
+                                <div className="premium-card" style={{height:'300px'}}>
+                                    <h4 className="w-full text-sm text-slate-300 mb-2">Entity: Volunteer Talent (Demand vs Supply)</h4>
+                                    <ReactEChart option={p2_skillGapOption} />
+                                </div>
+                                <div className="premium-card" style={{height:'280px'}}>
+                                    <h4 className="w-full text-sm text-slate-300 mb-2">Project Funding Bands</h4>
+                                    <ReactEChart option={p2_fundingOption} />
+                                </div>
+                            </div>
+                            <div className="space-y-6">
+                                <div className="premium-card" style={{height:'400px'}}>
+                                    <h4 className="w-full text-sm text-slate-300 mb-2">Entity: Investor Topology (Risk x Reporting Burden)</h4>
+                                    <ReactEChart option={p2_reportingRiskHeatmapOption} />
+                                </div>
+                                <div className="premium-card" style={{height:'280px'}}>
+                                    <h4 className="w-full text-sm text-slate-300 mb-2">Top Project Geographies</h4>
+                                    <ReactEChart option={p2_geoOption} />
+                                </div>
+                                <div className="premium-card flex flex-col justify-center">
+                                    <p className="text-slate-400 text-sm leading-relaxed mb-4">
+                                        <b>Deep Analytics Verified:</b> Canonical entity distributions are now computed from normalized backend artifacts, including stage concentration, funding bands, geography density, and skill market imbalances.
+                                    </p>
+                                    <ul className="text-sm text-slate-500 font-mono space-y-2">
+                                        <li className="flex items-center gap-2"><IconCheck /> Extracted Risk Models (Investors)</li>
+                                        <li className="flex items-center gap-2"><IconCheck /> Extracted Competency Matrices (Volunteers)</li>
+                                        <li className="flex items-center gap-2"><IconCheck /> Computed Delivery Stages & Funding Bands (Projects)</li>
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {activeTab === 3 && (
+                        <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 animate-fade-in">
+                            <div className="xl:col-span-2 space-y-6">
+                                <div className="premium-card">
+                                    <div className="flex items-start justify-between gap-6 mb-4">
+                                        <div>
+                                            <h4 className="w-full text-lg text-slate-200 mb-2">Semantic Landscape</h4>
+                                            <p className="text-sm text-slate-500 max-w-2xl">
+                                                This view shows semantic neighborhoods only. Nearby points share language, sectors, and themes, but they are not automatically matched relationships.
+                                            </p>
+                                        </div>
+                                        <div className="text-right">
+                                            <div className="text-xs uppercase tracking-[0.2em] text-slate-500 mb-1">Mapped Nodes</div>
+                                            <div className="text-2xl font-light text-emerald-300">{clusters.semantic_map.length}</div>
+                                        </div>
+                                    </div>
+                                    <div style={{width:'100%', height:'430px'}}>
+                                        <ReactEChart option={p3_scatterOption} />
+                                    </div>
+                                </div>
+
+                                <div className="premium-card">
+                                    <div className="flex items-start justify-between gap-6 mb-4">
+                                        <div>
+                                            <h4 className="w-full text-lg text-slate-200 mb-2">Match Corridor Scoreboard</h4>
+                                            <p className="text-sm text-slate-500 max-w-2xl">
+                                                Corridors are now ranked from actual sampled match quality across investors, volunteers, grants, and precedents rather than simple thematic overlap counts.
+                                            </p>
+                                        </div>
+                                    </div>
+                                    {clusters.match_corridors.length > 0 ? (
+                                        <div style={{width:'100%', height:'320px'}}>
+                                            <ReactEChart option={p3_corridorOption} />
+                                        </div>
+                                    ) : (
+                                        <div className="h-40 flex items-center text-sm text-slate-500">
+                                            Corridor aggregates will appear as match samples are generated.
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+
+                            <div className="space-y-6">
+                                <div className="premium-card">
+                                    <p className="text-xs uppercase tracking-[0.25em] text-slate-500 mb-3">Lead Match Signal</p>
+                                    <div className="text-3xl font-light text-white mb-2">
+                                        {clusters.cluster_signal.lead_sector}
+                                    </div>
+                                    <p className="text-sm text-slate-400 leading-relaxed mb-5">
+                                        {clusters.cluster_signal.narrative}
+                                    </p>
+                                    <div className="grid grid-cols-2 gap-4 text-sm">
+                                        <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-4">
+                                            <div className="text-slate-500 text-xs mb-1">FIT INDEX</div>
+                                            <div className="text-2xl font-light text-emerald-300">{clusters.cluster_signal.fit_index}</div>
+                                        </div>
+                                        <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-4">
+                                            <div className="text-slate-500 text-xs mb-1">NETWORK EDGES</div>
+                                            <div className="text-2xl font-light text-blue-300">{clusters.match_network.summary.connections}</div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div className="premium-card">
+                                    <h4 className="w-full text-sm text-slate-300 mb-2">Actionable Match Network</h4>
+                                    <p className="text-sm text-slate-500 mb-4">
+                                        This layer is different from clustering. Every edge here represents an actual top-ranked recommendation from the matching engine.
+                                    </p>
+                                    <div style={{width:'100%', height:'360px'}}>
+                                        <ReactEChart option={p3_graphOption} />
+                                    </div>
+                                </div>
+                                <div className="premium-card">
+                                    <h4 className="w-full text-sm text-slate-300 mb-4">Representative Project Match Stories</h4>
+                                    <div className="space-y-4 max-h-[420px] overflow-auto pr-1">
+                                        {clusters.project_match_panels.map(panel => (
+                                            <div key={panel.project_id} className="bg-slate-900/60 border border-slate-800 rounded-xl p-4">
+                                                <div className="text-white text-sm mb-1">{panel.project_title}</div>
+                                                <div className="text-xs uppercase tracking-[0.18em] text-slate-500 mb-3">
+                                                    {panel.sector} • {panel.stage} • {panel.country}
+                                                </div>
+                                                <div className="space-y-2 text-sm">
+                                                    <div className="flex justify-between gap-3">
+                                                        <span className="text-slate-500">Investor</span>
+                                                        <span className="text-slate-300 text-right">{panel.investor ? `${panel.investor.name} (${panel.investor.score})` : 'No high-confidence edge'}</span>
+                                                    </div>
+                                                    <div className="flex justify-between gap-3">
+                                                        <span className="text-slate-500">Volunteer</span>
+                                                        <span className="text-slate-300 text-right">{panel.volunteer ? `${panel.volunteer.name} (${panel.volunteer.score})` : 'No high-confidence edge'}</span>
+                                                    </div>
+                                                    <div className="flex justify-between gap-3">
+                                                        <span className="text-slate-500">Grant</span>
+                                                        <span className="text-slate-300 text-right">{panel.grant ? `${panel.grant.name} (${panel.grant.score})` : 'No high-confidence edge'}</span>
+                                                    </div>
+                                                    <div className="flex justify-between gap-3">
+                                                        <span className="text-slate-500">Precedent</span>
+                                                        <span className="text-slate-300 text-right">{panel.precedent ? `${panel.precedent.name} (${panel.precedent.score})` : 'No high-confidence edge'}</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {activeTab === 4 && (
+                        <div className="grid grid-cols-1 xl:grid-cols-[340px_minmax(0,1fr)] gap-6 animate-fade-in">
+                            <div className="space-y-6">
+                                <div className="premium-card">
+                                    <div className="flex items-start justify-between gap-4 mb-5">
+                                        <div>
+                                            <h4 className="text-lg text-slate-200 mb-2">Geographic Filters</h4>
+                                            <p className="text-sm text-slate-500 leading-relaxed">
+                                                Countries are shown by name, and activities that only have region precision stay grouped as explicit regional programs.
+                                            </p>
+                                        </div>
+                                    </div>
+
+                                    <div className="mb-5">
+                                        <div className="text-xs uppercase tracking-[0.2em] text-slate-500 mb-3">Layer</div>
+                                        <div className="flex flex-wrap gap-2">
+                                            {Object.entries(GEO_LAYER_META).map(([key, meta]) => (
+                                                <button
+                                                    key={key}
+                                                    onClick={() => setGeoLayer(key)}
+                                                    className="rounded-full border px-3 py-2 text-xs transition"
+                                                    style={geoLayer === key
+                                                        ? { borderColor: meta.tone, backgroundColor: `${meta.tone}22`, color: meta.tone }
+                                                        : { borderColor: COLORS.border, color: COLORS.textSoft }}
+                                                >
+                                                    {meta.label}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+
+                                    <div className="mb-5">
+                                        <div className="text-xs uppercase tracking-[0.2em] text-slate-500 mb-3">Place Type</div>
+                                        <div className="grid grid-cols-3 gap-2">
+                                            {[['all','All'], ['country','Countries'], ['region','Regions']].map(([value, label]) => (
+                                                <button
+                                                    key={value}
+                                                    onClick={() => setGeoPlaceType(value)}
+                                                    className="rounded-xl border px-3 py-3 text-sm transition"
+                                                    style={geoPlaceType === value
+                                                        ? { borderColor: COLORS.projects, backgroundColor: 'rgba(25,194,143,0.14)', color: COLORS.text }
+                                                        : { borderColor: COLORS.border, color: COLORS.textSoft }}
+                                                >
+                                                    {label}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+
+                                    <div>
+                                        <label className="block text-xs uppercase tracking-[0.2em] text-slate-500 mb-3">Sector</label>
+                                        <select
+                                            value={geoSector}
+                                            onChange={(event) => setGeoSector(event.target.value)}
+                                            className="w-full rounded-xl border px-4 py-3 text-sm outline-none bg-slate-900/70"
+                                            style={{ borderColor: COLORS.border, color: COLORS.text }}
+                                        >
+                                            <option value="All sectors">All sectors</option>
+                                            {(geoMap.filters?.sectors || []).map(sector => (
+                                                <option key={sector} value={sector}>{sector}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                </div>
+
+                                <div className="premium-card">
+                                    <h4 className="text-sm text-slate-300 mb-4">Coverage Snapshot</h4>
+                                    <div className="grid gap-3">
+                                        {[
+                                            ['Tracked activities', geoMap.summary?.tracked_activities || 0, COLORS.projects],
+                                            ['Distinct places', geoMap.summary?.distinct_places || 0, COLORS.investors],
+                                            ['Mapped locations', geoMap.summary?.mapped_locations || 0, COLORS.volunteers],
+                                            ['Unlocated activities', geoMap.summary?.unlocated_activities || 0, COLORS.ngos]
+                                        ].map(([label, value, tone]) => (
+                                            <div key={label} className="rounded-xl border px-4 py-3 bg-slate-900/60" style={{ borderColor: COLORS.border }}>
+                                                <div className="text-xs uppercase tracking-[0.18em] text-slate-500">{label}</div>
+                                                <div className="mt-2 text-2xl font-light" style={{ color: tone }}>{value}</div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <div className="mt-5 rounded-xl border p-4 bg-slate-900/60" style={{ borderColor: COLORS.border }}>
+                                        <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Top activity hotspot</div>
+                                        <div className="mt-2 text-lg text-white">{geoMap.summary?.top_activity_location?.name || 'No geography'}</div>
+                                        <div className="mt-1 text-sm text-slate-400">
+                                            {geoMap.summary?.top_activity_location?.count || 0} activities in the current dataset.
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="premium-card">
+                                    <div className="mb-4">
+                                        <h4 className="text-sm text-slate-300">Selected Location</h4>
+                                        <p className="mt-1 text-sm text-slate-500">Click a bubble or a hotspot row to inspect local density.</p>
+                                    </div>
+
+                                    {activeGeoPoint ? (
+                                        <div className="space-y-4">
+                                            <div>
+                                                <div className="text-xl text-white">{activeGeoPoint.name}</div>
+                                                <div className="mt-1 text-xs uppercase tracking-[0.18em] text-slate-500">
+                                                    {activeGeoPoint.place_type === 'country' ? 'Country' : 'Regional Program'} | {GEO_LAYER_META[geoLayer].label}: {geoMetricValue(activeGeoPoint, geoLayer)}
+                                                </div>
+                                            </div>
+
+                                            <div className="grid grid-cols-2 gap-3">
+                                                {[
+                                                    ['Activities', activeGeoPoint.activity_count || 0, COLORS.projects],
+                                                    ['Projects', activeGeoPoint.project_count || 0, COLORS.investors],
+                                                    ['Volunteers', activeGeoPoint.volunteer_count || 0, COLORS.volunteers],
+                                                    ['Investors', activeGeoPoint.investor_count || 0, COLORS.ngos]
+                                                ].map(([label, value, tone]) => (
+                                                    <div key={label} className="rounded-xl border p-3 bg-slate-900/60" style={{ borderColor: COLORS.border }}>
+                                                        <div className="text-xs uppercase tracking-[0.18em] text-slate-500">{label}</div>
+                                                        <div className="mt-2 text-xl font-light" style={{ color: tone }}>{value}</div>
+                                                    </div>
+                                                ))}
+                                            </div>
+
+                                            <div className="rounded-xl border p-4 bg-slate-900/60" style={{ borderColor: COLORS.border }}>
+                                                <div className="text-xs uppercase tracking-[0.18em] text-slate-500 mb-2">Dominant activity sector</div>
+                                                <div className="text-sm text-white">{activeGeoPoint.dominant_sector}</div>
+                                                <div className="mt-3 space-y-2">
+                                                    {(activeGeoPoint.sector_breakdown || []).slice(0, 4).map(sector => (
+                                                        <div key={sector.name} className="flex items-center gap-3">
+                                                            <div className="w-24 text-xs text-slate-400">{sector.name}</div>
+                                                            <div className="h-2 flex-1 rounded bg-slate-800">
+                                                                <div
+                                                                    className="h-2 rounded bg-emerald-500"
+                                                                    style={{ width: `${Math.max(8, (Number(sector.value || 0) / Math.max(Number(activeGeoPoint.activity_count || 0), 1)) * 100)}%` }}
+                                                                ></div>
+                                                            </div>
+                                                            <div className="w-8 text-right text-xs text-slate-200">{sector.value}</div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+
+                                            <div className="rounded-xl border p-4 bg-slate-900/60" style={{ borderColor: COLORS.border }}>
+                                                <div className="text-xs uppercase tracking-[0.18em] text-slate-500 mb-2">Sample organizations</div>
+                                                <div className="space-y-2 text-sm text-slate-400">
+                                                    {(activeGeoPoint.sample_organizations || []).length
+                                                        ? activeGeoPoint.sample_organizations.map(org => <div key={org}>{org}</div>)
+                                                        : <div>No organization samples available for this location.</div>}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <div className="text-sm text-slate-500">No locations match the current filter set.</div>
+                                    )}
+                                </div>
+                            </div>
+
+                            <div className="space-y-6">
+                                <div className="premium-card">
+                                    <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4 mb-5">
+                                        <div>
+                                            <h4 className="text-lg text-slate-200 mb-2">Activity Intensity Map</h4>
+                                            <p className="text-sm text-slate-500 max-w-3xl leading-relaxed">
+                                                Bubble size tracks the selected layer. Countries use explicit country names, while cross-border programs without country-level precision stay mapped as regional hubs.
+                                            </p>
+                                        </div>
+                                        <div className="rounded-xl border px-4 py-3 text-right bg-slate-900/60" style={{ borderColor: COLORS.border }}>
+                                            <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Filtered locations</div>
+                                            <div className="mt-2 text-2xl font-light" style={{ color: GEO_LAYER_META[geoLayer].tone }}>{filteredGeoPoints.length}</div>
+                                        </div>
+                                    </div>
+
+                                    <div
+                                        className="relative overflow-hidden rounded-[28px] border"
+                                        style={{
+                                            borderColor: COLORS.border,
+                                            background: 'radial-gradient(circle at 20% 18%, rgba(79,124,255,0.14), transparent 18%), radial-gradient(circle at 80% 16%, rgba(25,194,143,0.10), transparent 22%), linear-gradient(180deg, rgba(9,18,30,0.96), rgba(12,23,38,0.96))'
+                                        }}
+                                    >
+                                        {worldMapReady ? (
+                                            <ReactEChart
+                                                option={p4_geoOption}
+                                                style={{ height: '560px' }}
+                                                onClick={(params) => {
+                                                    const point = params?.data?.point;
+                                                    if (point?.id) {
+                                                        setSelectedGeoId(point.id);
+                                                    }
+                                                }}
+                                            />
+                                        ) : (
+                                            <svg viewBox={`0 0 ${GEO_BOUNDS.width} ${GEO_BOUNDS.height}`} className="h-[560px] w-full">
+                                                {[-120, -60, 0, 60, 120].map(longitude => {
+                                                    const x = ((longitude + 180) / 360) * GEO_BOUNDS.width;
+                                                    return <line key={longitude} x1={x} y1={0} x2={x} y2={GEO_BOUNDS.height} stroke="rgba(111,130,156,0.20)" strokeDasharray="4 10" />;
+                                                })}
+                                                {[-30, 0, 30, 60].map(latitude => {
+                                                    const y = ((GEO_BOUNDS.maxLat - latitude) / (GEO_BOUNDS.maxLat - GEO_BOUNDS.minLat)) * GEO_BOUNDS.height;
+                                                    return <line key={latitude} x1={0} y1={y} x2={GEO_BOUNDS.width} y2={y} stroke="rgba(111,130,156,0.20)" strokeDasharray="4 10" />;
+                                                })}
+                                                {[
+                                                    ['North America', 170, 150],
+                                                    ['South America', 260, 360],
+                                                    ['Europe', 505, 110],
+                                                    ['Africa', 520, 260],
+                                                    ['Middle East', 615, 210],
+                                                    ['Asia', 740, 190],
+                                                    ['Oceania', 865, 365]
+                                                ].map(([label, x, y]) => (
+                                                    <text key={label} x={x} y={y} fill="rgba(159,176,199,0.45)" fontSize="18" letterSpacing="2" textAnchor="middle">
+                                                        {label}
+                                                    </text>
+                                                ))}
+                                                {[...mappedGeoPoints]
+                                                    .sort((left, right) => geoMetricValue(left, geoLayer) - geoMetricValue(right, geoLayer))
+                                                    .map(point => {
+                                                        const { x, y } = projectGeoPoint(point.lat, point.lon);
+                                                        const metric = geoMetricValue(point, geoLayer);
+                                                        const radius = 7 + Math.sqrt(metric / maxGeoMetric) * 26;
+                                                        const selected = activeGeoPoint && activeGeoPoint.id === point.id;
+                                                        const showLabel = topGeoLabelIds.includes(point.id);
+                                                        return (
+                                                            <g key={point.id} onClick={() => setSelectedGeoId(point.id)} style={{ cursor: 'pointer' }}>
+                                                                <circle
+                                                                    cx={x}
+                                                                    cy={y}
+                                                                    r={radius}
+                                                                    fill={selected ? COLORS.text : GEO_LAYER_META[geoLayer].tone}
+                                                                    fillOpacity={selected ? 0.96 : 0.74}
+                                                                    stroke={selected ? GEO_LAYER_META[geoLayer].tone : 'rgba(236,242,248,0.18)'}
+                                                                    strokeWidth={selected ? 3 : 1.5}
+                                                                />
+                                                                <circle
+                                                                    cx={x}
+                                                                    cy={y}
+                                                                    r={radius + 6}
+                                                                    fill="none"
+                                                                    stroke={selected ? 'rgba(236,242,248,0.42)' : 'rgba(236,242,248,0.06)'}
+                                                                    strokeWidth={1}
+                                                                />
+                                                                {showLabel && (
+                                                                    <text x={x} y={Math.max(18, y - radius - 10)} fill={selected ? COLORS.text : COLORS.textSoft} fontSize="13" textAnchor="middle">
+                                                                        {point.name}
+                                                                    </text>
+                                                                )}
+                                                            </g>
+                                                        );
+                                                    })}
+                                            </svg>
+                                        )}
+
+                                        <div className="pointer-events-none absolute left-4 top-4 rounded-xl border px-4 py-3" style={{ borderColor: COLORS.border, backgroundColor: 'rgba(8,17,31,0.84)' }}>
+                                            <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Active layer</div>
+                                            <div className="mt-2 text-lg" style={{ color: GEO_LAYER_META[geoLayer].tone }}>{GEO_LAYER_META[geoLayer].label}</div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="premium-card">
+                                    <div className="flex items-start justify-between gap-4 mb-4">
+                                        <div>
+                                            <h4 className="text-sm text-slate-300 mb-2">Hotspot Ranking</h4>
+                                            <p className="text-sm text-slate-500 leading-relaxed">
+                                                Ranked by the selected layer so we can immediately see where activity, projects, volunteers, or investors are densest.
+                                            </p>
+                                        </div>
+                                    </div>
+
+                                    <div className="space-y-3">
+                                        {filteredGeoPoints.slice(0, 10).map(point => {
+                                            const selected = activeGeoPoint && activeGeoPoint.id === point.id;
+                                            return (
+                                                <button
+                                                    key={point.id}
+                                                    onClick={() => setSelectedGeoId(point.id)}
+                                                    className="flex w-full items-center justify-between gap-4 rounded-xl border px-4 py-3 text-left transition"
+                                                    style={selected
+                                                        ? { borderColor: COLORS.projects, backgroundColor: 'rgba(25,194,143,0.10)' }
+                                                        : { borderColor: COLORS.border, backgroundColor: COLORS.panelSoft }}
+                                                >
+                                                    <div>
+                                                        <div className="text-sm text-white">{point.name}</div>
+                                                        <div className="mt-1 text-xs uppercase tracking-[0.16em] text-slate-500">
+                                                            {point.place_type === 'country' ? 'Country' : 'Regional Program'} | {point.dominant_sector}
+                                                        </div>
+                                                    </div>
+                                                    <div className="text-right">
+                                                        <div className="text-lg font-light" style={{ color: GEO_LAYER_META[geoLayer].tone }}>
+                                                            {geoMetricValue(point, geoLayer)}
+                                                        </div>
+                                                        <div className="text-xs text-slate-400">activities: {point.activity_count || 0}</div>
+                                                    </div>
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<Dashboard />);
+    </script>
+</body>
+</html>

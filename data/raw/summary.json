@@ -1,0 +1,9 @@
+{
+  "seed": 42,
+  "counts": {
+    "investors": 120,
+    "volunteers": 220,
+    "projects": 320
+  },
+  "output_dir": "/content/ecowise_generated"
+}
